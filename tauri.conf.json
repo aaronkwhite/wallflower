@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Wallflower",
+  "version": "0.2.5",
+  "identifier": "com.wallflower.app",
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "frontendDist": "./ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Wallflower",
+        "width": 900,
+        "height": 700,
+        "minWidth": 600,
+        "minHeight": 500,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 16, "y": 28 }
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": [
+      "icons/app.icns",
+      "icons/logos/wallflower.png"
+    ],
+    "category": "Productivity",
+    "shortDescription": "A quiet reader for paywalled articles",
+    "longDescription": "A lightweight macOS desktop app for reading articles with a clean, distraction-free experience.",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  }
+}
