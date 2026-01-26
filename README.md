@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="icons/logos/wallflower-logo.svg" alt="Wallflower" width="120">
+  <img src="icons/logos/wallflower-logo.svg" alt="Wallflower" width="200">
 </p>
 
 # Wallflower
