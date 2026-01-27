@@ -4,7 +4,7 @@
 
 # Wallflower
 
-![Version](https://img.shields.io/badge/version-0.3.0-blue)
+![Version](https://img.shields.io/badge/version-0.3.1-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 A quiet reader for consuming articles. Cross-platform desktop application for macOS, Windows, and Linux.

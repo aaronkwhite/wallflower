@@ -2,6 +2,11 @@
 
 All notable changes to Wallflower will be documented in this file.
 
+## [0.3.1] - 2025-01-27
+
+### Added
+- Confetti celebration when adding articles to favorites
+
 ## [0.3.0] - 2025-01-26
 
 ### Added
