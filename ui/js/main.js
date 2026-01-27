@@ -645,9 +645,29 @@ function attachArticleListHandlers(list) {
             try {
                 const isFavorite = await invoke('toggle_favorite', { url });
                 btn.classList.toggle('favorited', isFavorite);
-                // Refresh both lists
-                await loadRecentArticles();
-                await loadFavorites();
+                btn.title = isFavorite ? 'Remove from favorites' : 'Add to favorites';
+
+                // Confetti burst when adding to favorites
+                if (isFavorite && window.confetti) {
+                    const rect = btn.getBoundingClientRect();
+                    const x = (rect.left + rect.width / 2) / window.innerWidth;
+                    const y = (rect.top + rect.height / 2) / window.innerHeight;
+
+                    confetti({
+                        particleCount: 30,
+                        spread: 100,
+                        origin: { x, y },
+                        colors: ['#E54D2E', '#E5A84B', '#FF6B6B', '#FFE66D'],
+                        scalar: 0.6,
+                        gravity: 0.5,
+                        startVelocity: 15,
+                        angle: 90,
+                        ticks: 250
+                    });
+                }
+
+                // No list reload - just update UI state
+                // Lists will refresh on next tab switch or page load
             } catch (err) {
                 console.error('Failed to toggle favorite:', err);
             }
@@ -861,6 +881,25 @@ async function toggleFavorite() {
             currentArticle.is_favorite = isFavorite;
         }
         updateFavoriteButton();
+
+        // Confetti burst when adding to favorites
+        if (isFavorite && window.confetti) {
+            const rect = favoriteBtn.getBoundingClientRect();
+            const x = (rect.left + rect.width / 2) / window.innerWidth;
+            const y = (rect.top + rect.height / 2) / window.innerHeight;
+
+            confetti({
+                particleCount: 30,
+                spread: 100,
+                origin: { x, y },
+                colors: ['#E54D2E', '#E5A84B', '#FF6B6B', '#FFE66D'],
+                scalar: 0.6,
+                gravity: 0.5,
+                startVelocity: 15,
+                angle: 90,
+                ticks: 250
+            });
+        }
     } catch (err) {
         console.error('Failed to toggle favorite:', err);
     }
