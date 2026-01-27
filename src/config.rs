@@ -29,8 +29,8 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             endpoints: vec![
-                "https://freedium.cfd/".to_string(),
                 "https://freedium-mirror.cfd/".to_string(),
+                "https://freedium.cfd/".to_string(),
             ],
             theme: Theme::default(),
             font_size: 17,

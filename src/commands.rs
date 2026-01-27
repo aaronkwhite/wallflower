@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 
 use super::config::AppConfig;
 use super::database::{Database, HistoryEntry, StoredArticle};
-use super::freedium::{Article, FreediumClient};
+use super::freedium::FreediumClient;
 
 /// Application state shared across commands
 pub struct AppState {
@@ -140,6 +140,12 @@ pub fn get_history(limit: Option<i32>, state: State<'_, AppState>) -> Result<Vec
 #[tauri::command]
 pub fn get_favorites(state: State<'_, AppState>) -> Result<Vec<HistoryEntry>, String> {
     state.database.get_favorites().map_err(|e| e.to_string())
+}
+
+/// Search articles using full-text search
+#[tauri::command]
+pub fn search_articles(query: String, state: State<'_, AppState>) -> Result<Vec<HistoryEntry>, String> {
+    state.database.search_articles(&query).map_err(|e| e.to_string())
 }
 
 /// Toggle favorite status for an article

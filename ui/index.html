@@ -8,6 +8,22 @@
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
+    <!-- Splash Screen -->
+    <div id="splash-screen" class="splash-screen">
+        <div class="splash-content">
+            <svg class="splash-logo" viewBox="0 0 460 460" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path fill-rule="evenodd" clip-rule="evenodd" d="M294.879 1.0733C269.942 2.1699 246.721 16.1828 232.916 38.464C230.727 41.9973 228.809 44.8828 228.654 44.8756C228.499 44.8684 226.553 41.9675 224.329 38.429C212.438 19.5092 195.349 7.3754 173.795 2.5492C167.087 1.0474 150.112 0.9225 143.618 2.3274C111.963 9.1749 88.455 32.9714 82.061 64.64C79.623 76.716 80.732 93.093 84.811 105.242C85.953 108.644 91.036 119.318 92.529 121.448C93.858 123.346 93.433 123.629 89.236 123.634C68.911 123.654 51.497 130.008 36.803 142.763C-1.1643 175.721 1.6319 236.192 42.476 265.452C55.943 275.099 68.712 279.333 87.578 280.406C90.695 280.583 93.18 280.873 93.101 281.051C93.022 281.229 91.591 284.029 89.922 287.274C75.411 315.482 78.534 348.276 98 372.094C128.168 409.008 181.819 410.826 214.939 376.056C219.567 371.197 226.001 362.465 227.701 358.735C228.563 356.844 228.74 356.999 231.903 362.408C245.811 386.2 271.03 400.791 298.241 400.788C320.398 400.786 338.155 393.445 353.703 377.858C377.838 353.666 383.022 317.964 366.964 286.542C365.383 283.449 364.197 280.746 364.327 280.534C364.458 280.323 366.767 280.148 369.458 280.146C426.372 280.1 463.866 219.9 439.376 167.885C426.842 141.261 401.905 125.102 371.505 123.901C367.562 123.745 364.221 123.503 364.08 123.362C363.94 123.221 365.371 120.037 367.261 116.286C373.772 103.362 375.798 94.544 375.778 79.218C375.763 67.072 375.014 62.279 371.621 52.609C360.505 20.9188 328.736 -0.4156 294.879 1.0733Z" fill="url(#paint0_linear_splash)"/>
+                <defs>
+                    <linearGradient id="paint0_linear_splash" x1="101.237" y1="-14.1239" x2="371.052" y2="400.981" gradientUnits="userSpaceOnUse">
+                        <stop stop-color="#E5A84B"/>
+                        <stop offset="0.735577" stop-color="#E54D2E"/>
+                    </linearGradient>
+                </defs>
+            </svg>
+            <div class="splash-version" id="splash-version">v0.2.5</div>
+        </div>
+    </div>
+
     <div id="app">
         <!-- Toolbar (macOS native style) -->
         <!-- Titlebar -->
@@ -55,6 +71,53 @@
                     autocomplete="off"
                 >
             </div>
+
+            <!-- Sort action button -->
+            <div class="nav-action" id="sort-action">
+                <button id="sort-btn" class="toolbar-btn" title="Sort">
+                    <i data-lucide="clock" width="16" height="16"></i>
+                </button>
+                <div id="sort-dropdown" class="sort-dropdown">
+                    <button class="sort-dropdown-item active" data-sort="recent">
+                        <i data-lucide="clock" width="14" height="14"></i>
+                        Recent
+                    </button>
+                    <button class="sort-dropdown-item" data-sort="title">
+                        <i data-lucide="arrow-down-a-z" width="14" height="14"></i>
+                        Title
+                    </button>
+                    <button class="sort-dropdown-item" data-sort="author">
+                        <i data-lucide="user" width="14" height="14"></i>
+                        Author
+                    </button>
+                    <button class="sort-dropdown-item" data-sort="added">
+                        <i data-lucide="calendar" width="14" height="14"></i>
+                        Date Added
+                    </button>
+                </div>
+            </div>
+
+            <!-- Search action button (collapsed) -->
+            <div class="nav-action" id="search-action">
+                <button id="search-btn" class="toolbar-btn" title="Search (⌘K)">
+                    <i data-lucide="search" width="16" height="16"></i>
+                </button>
+            </div>
+
+            <!-- Search overlay (expanded, hidden by default) -->
+            <div class="search-overlay hidden" id="search-overlay">
+                <div class="search-input-wrapper">
+                    <i data-lucide="search" class="search-input-icon" width="14" height="14"></i>
+                    <input type="text" id="search-input" placeholder="Search articles..." spellcheck="false" autocomplete="off">
+                    <button id="search-clear-btn" class="search-clear-btn hidden" title="Clear">
+                        <i data-lucide="x" width="14" height="14"></i>
+                    </button>
+                </div>
+                <button id="search-close-btn" class="toolbar-btn" title="Close (Esc)">
+                    <i data-lucide="arrow-right" width="16" height="16"></i>
+                </button>
+            </div>
+
             <div class="nav-action" id="favorite-action">
                 <button id="favorite-btn" class="toolbar-btn" title="Add to Favorites">
                     <i data-lucide="heart" width="16" height="16"></i>

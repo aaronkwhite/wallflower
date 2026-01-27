@@ -11,6 +11,18 @@ let currentUrl = '';
 let currentArticle = null;
 let history = [];
 let historyIndex = -1;
+let isSearchMode = false;
+let searchDebounceTimer = null;
+let currentSortOrder = 'recent'; // recent, title, author, added
+let selectedListIndex = -1; // Currently selected item in article list
+
+// Sort icon mapping
+const sortIcons = {
+    recent: 'clock',
+    title: 'arrow-down-a-z',
+    author: 'user',
+    added: 'calendar'
+};
 
 // DOM elements
 const urlInput = document.getElementById('url-input');
@@ -27,9 +39,32 @@ const forwardBtn = document.getElementById('forward-btn');
 const favoriteBtn = document.getElementById('favorite-btn');
 const copyMarkdownBtn = document.getElementById('copy-markdown-btn');
 const saveMarkdownBtn = document.getElementById('save-markdown-btn');
+const searchBtn = document.getElementById('search-btn');
+const searchOverlay = document.getElementById('search-overlay');
+const searchInput = document.getElementById('search-input');
+const searchClearBtn = document.getElementById('search-clear-btn');
+const searchCloseBtn = document.getElementById('search-close-btn');
+const navBar = document.querySelector('.nav-bar');
+const sortBtn = document.getElementById('sort-btn');
+const sortDropdown = document.getElementById('sort-dropdown');
+
+// Splash screen elements
+const splashScreen = document.getElementById('splash-screen');
+const splashVersion = document.getElementById('splash-version');
 
 // Initialize application
 document.addEventListener('DOMContentLoaded', async () => {
+    // Get version early for splash screen
+    let version = '0.2.5';
+    try {
+        version = await getVersion();
+        splashVersion.textContent = `v${version}`;
+        document.getElementById('version-badge').textContent = `v${version}`;
+    } catch (err) {
+        console.error('Failed to get version:', err);
+    }
+
+    // Apply theme early so splash matches app theme
     try {
         config = await invoke('get_config');
         applyTheme(config.theme);
@@ -53,17 +88,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         lucide.createIcons();
     }
 
-    // Set version from Cargo.toml
-    try {
-        const version = await getVersion();
-        document.getElementById('version-badge').textContent = `v${version}`;
-    } catch (err) {
-        console.error('Failed to get version:', err);
-    }
-
     // Load and show start page
     await loadStartPage();
+
+    // Fade out splash screen after minimum display time
+    const minSplashTime = 1200; // Minimum time to show splash
+    setTimeout(() => {
+        hideSplashScreen();
+    }, minSplashTime);
 });
+
+// Hide splash screen with fade animation
+function hideSplashScreen() {
+    if (!splashScreen) return;
+
+    splashScreen.classList.add('fade-out');
+
+    // Remove from DOM after fade completes
+    setTimeout(() => {
+        splashScreen.classList.add('hidden');
+    }, 500);
+}
 
 function setupEventListeners() {
     // Window dragging
@@ -105,6 +150,38 @@ function setupEventListeners() {
     // Markdown export buttons
     copyMarkdownBtn.addEventListener('click', copyAsMarkdown);
     saveMarkdownBtn.addEventListener('click', saveAsMarkdown);
+
+    // Search functionality
+    searchBtn.addEventListener('click', openSearch);
+    searchCloseBtn.addEventListener('click', closeSearch);
+    searchClearBtn.addEventListener('click', clearSearch);
+    searchInput.addEventListener('input', handleSearchInput);
+    searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeSearch();
+        }
+    });
+
+    // Sort functionality
+    sortBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        sortDropdown.classList.toggle('open');
+    });
+
+    // Close sort dropdown when clicking outside
+    document.addEventListener('click', () => {
+        sortDropdown.classList.remove('open');
+    });
+
+    // Sort dropdown items
+    sortDropdown.querySelectorAll('.sort-dropdown-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const sortOrder = item.dataset.sort;
+            setSortOrder(sortOrder);
+            sortDropdown.classList.remove('open');
+        });
+    });
 
     // Settings button
     settingsBtn.addEventListener('click', openSettings);
@@ -274,10 +351,16 @@ function setupKeyboardShortcuts() {
             }
         }
 
-        // Escape to close modal or go to start page
+        // Escape to close modal, blur inputs, clear selection, or go to start page
         if (e.key === 'Escape') {
             if (!settingsModal.classList.contains('hidden')) {
                 closeSettings();
+            } else if (document.activeElement === urlInput || document.activeElement === searchInput) {
+                // Blur the input field
+                document.activeElement.blur();
+            } else if (selectedListIndex >= 0) {
+                // Clear list selection
+                clearListSelection();
             } else if (!articleContainer.classList.contains('hidden')) {
                 showStartPage();
             }
@@ -288,6 +371,18 @@ function setupKeyboardShortcuts() {
             e.preventDefault();
             urlInput.focus();
             urlInput.select();
+        }
+
+        // Cmd+K to open search (only on start page)
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+            e.preventDefault();
+            if (!startPage.classList.contains('hidden')) {
+                if (isSearchMode) {
+                    closeSearch();
+                } else {
+                    openSearch();
+                }
+            }
         }
 
         // Cmd+R to refresh current article
@@ -323,7 +418,88 @@ function setupKeyboardShortcuts() {
             e.preventDefault();
             saveAsMarkdown();
         }
+
+        // Arrow key navigation in article list
+        // Only when: on start page, not in an input field (except search input)
+        const isInInput = document.activeElement?.tagName === 'INPUT' ||
+                          document.activeElement?.tagName === 'TEXTAREA';
+        const isInSearchInput = document.activeElement === searchInput;
+        const canNavigateList = !startPage.classList.contains('hidden') &&
+                                (!isInInput || isInSearchInput) &&
+                                !e.metaKey && !e.ctrlKey && !e.altKey;
+
+        if (canNavigateList) {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                navigateList(e.key === 'ArrowDown' ? 1 : -1);
+            }
+            if (e.key === 'Enter' && selectedListIndex >= 0) {
+                // Only if not in URL input (which has its own Enter handler)
+                if (document.activeElement !== urlInput) {
+                    e.preventDefault();
+                    openSelectedArticle();
+                }
+            }
+        }
     });
+}
+
+// Arrow key navigation for article list
+function navigateList(direction) {
+    const activeTab = document.querySelector('.tab.active');
+    const listId = activeTab?.dataset.tab === 'favorites' ? 'favorites-list' : 'recent-list';
+    const list = document.getElementById(listId);
+    const items = list.querySelectorAll('.article-list-item');
+
+    if (items.length === 0) return;
+
+    // Remove selection from current item
+    if (selectedListIndex >= 0 && selectedListIndex < items.length) {
+        items[selectedListIndex].classList.remove('selected');
+    }
+
+    // Calculate new index
+    if (selectedListIndex === -1) {
+        // No selection yet, start at first or last depending on direction
+        selectedListIndex = direction === 1 ? 0 : items.length - 1;
+    } else {
+        selectedListIndex += direction;
+        // Wrap around
+        if (selectedListIndex < 0) selectedListIndex = items.length - 1;
+        if (selectedListIndex >= items.length) selectedListIndex = 0;
+    }
+
+    // Add selection to new item
+    items[selectedListIndex].classList.add('selected');
+
+    // Scroll into view
+    items[selectedListIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function openSelectedArticle() {
+    const activeTab = document.querySelector('.tab.active');
+    const listId = activeTab?.dataset.tab === 'favorites' ? 'favorites-list' : 'recent-list';
+    const list = document.getElementById(listId);
+    const items = list.querySelectorAll('.article-list-item');
+
+    if (selectedListIndex >= 0 && selectedListIndex < items.length) {
+        const url = items[selectedListIndex].dataset.url;
+        if (url) {
+            urlInput.value = url;
+            handleFetch();
+        }
+    }
+}
+
+function clearListSelection() {
+    const lists = ['recent-list', 'favorites-list'];
+    lists.forEach(listId => {
+        const list = document.getElementById(listId);
+        list.querySelectorAll('.article-list-item.selected').forEach(item => {
+            item.classList.remove('selected');
+        });
+    });
+    selectedListIndex = -1;
 }
 
 // Start page and tabs
@@ -336,13 +512,17 @@ async function loadRecentArticles() {
     const list = document.getElementById('recent-list');
     const empty = document.getElementById('recent-empty');
 
+    // Clear selection when reloading list
+    selectedListIndex = -1;
+
     try {
         const articles = await invoke('get_history', { limit: 50 });
         if (articles.length === 0) {
             list.classList.add('hidden');
             empty.classList.remove('hidden');
         } else {
-            list.innerHTML = articles.map(article => renderArticleListItem(article)).join('');
+            const sorted = sortArticles(articles, currentSortOrder);
+            list.innerHTML = sorted.map(article => renderArticleListItem(article)).join('');
             list.classList.remove('hidden');
             empty.classList.add('hidden');
             attachArticleListHandlers(list);
@@ -367,7 +547,8 @@ async function loadFavorites() {
             list.classList.add('hidden');
             empty.classList.remove('hidden');
         } else {
-            list.innerHTML = articles.map(article => renderArticleListItem(article)).join('');
+            const sorted = sortArticles(articles, currentSortOrder);
+            list.innerHTML = sorted.map(article => renderArticleListItem(article)).join('');
             list.classList.remove('hidden');
             empty.classList.add('hidden');
             attachArticleListHandlers(list);
@@ -511,6 +692,9 @@ function switchTab(tabName) {
         loadRecentArticles();
         loadFavorites();
     }
+
+    // Clear list selection when switching tabs
+    clearListSelection();
 
     // Update tab buttons
     document.querySelectorAll('.tab').forEach(tab => {
@@ -734,6 +918,9 @@ function showStartPage() {
     urlInput.value = '';
     historyIndex = -1;
 
+    // Clear list selection
+    clearListSelection();
+
     // Push to browser history for native gesture support
     window.history.pushState({ type: 'home' }, '', window.location.href);
 
@@ -927,6 +1114,186 @@ function isValidMediumUrl(url) {
     } catch {
         return false;
     }
+}
+
+// ===========================================
+// Sort Functions
+// ===========================================
+
+function setSortOrder(sortOrder) {
+    currentSortOrder = sortOrder;
+
+    // Update button icon
+    const iconName = sortIcons[sortOrder];
+    sortBtn.innerHTML = `<i data-lucide="${iconName}" width="16" height="16"></i>`;
+    if (window.lucide) lucide.createIcons();
+
+    // Update active state in dropdown
+    sortDropdown.querySelectorAll('.sort-dropdown-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.sort === sortOrder);
+    });
+
+    // Reload lists with new sort order
+    loadRecentArticles();
+    loadFavorites();
+}
+
+function sortArticles(articles, sortOrder) {
+    const sorted = [...articles];
+
+    switch (sortOrder) {
+        case 'title':
+            sorted.sort((a, b) => a.title.localeCompare(b.title));
+            break;
+        case 'author':
+            sorted.sort((a, b) => a.author.localeCompare(b.author));
+            break;
+        case 'added':
+            // cached_at is when first added (approximation since we don't have a separate field)
+            sorted.sort((a, b) => new Date(b.last_read_at) - new Date(a.last_read_at));
+            break;
+        case 'recent':
+        default:
+            // Already sorted by last_read_at from backend
+            break;
+    }
+
+    return sorted;
+}
+
+// ===========================================
+// Search Functions
+// ===========================================
+
+function openSearch() {
+    isSearchMode = true;
+    navBar.classList.add('search-active');
+    searchOverlay.classList.remove('hidden');
+    searchInput.focus();
+
+    // Re-init icons
+    if (window.lucide) lucide.createIcons();
+}
+
+function closeSearch() {
+    isSearchMode = false;
+    navBar.classList.remove('search-active');
+    searchOverlay.classList.add('hidden');
+    searchClearBtn.classList.add('hidden');
+
+    // Clear list selection
+    clearListSelection();
+
+    // Clear any pending debounce
+    if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = null;
+    }
+
+    // Only reload if there was a search query (results are showing)
+    const hadQuery = searchInput.value.trim().length > 0;
+    searchInput.value = '';
+
+    if (hadQuery) {
+        // Reload current tab list to restore original view
+        const activeTab = document.querySelector('.tab.active');
+        if (activeTab) {
+            if (activeTab.dataset.tab === 'recent') {
+                loadRecentArticles();
+            } else {
+                loadFavorites();
+            }
+        }
+    }
+}
+
+function clearSearch() {
+    searchInput.value = '';
+    searchClearBtn.classList.add('hidden');
+    searchInput.focus();
+
+    // Reload current tab list
+    const activeTab = document.querySelector('.tab.active');
+    if (activeTab) {
+        if (activeTab.dataset.tab === 'recent') {
+            loadRecentArticles();
+        } else {
+            loadFavorites();
+        }
+    }
+}
+
+function handleSearchInput() {
+    const query = searchInput.value.trim();
+
+    // Show/hide clear button
+    if (query.length > 0) {
+        searchClearBtn.classList.remove('hidden');
+    } else {
+        searchClearBtn.classList.add('hidden');
+    }
+
+    // Clear previous debounce timer
+    if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+    }
+
+    // If empty, show normal list
+    if (!query) {
+        const activeTab = document.querySelector('.tab.active');
+        if (activeTab) {
+            if (activeTab.dataset.tab === 'recent') {
+                loadRecentArticles();
+            } else {
+                loadFavorites();
+            }
+        }
+        return;
+    }
+
+    // Debounce search by 200ms
+    searchDebounceTimer = setTimeout(async () => {
+        await performSearch(query);
+    }, 200);
+}
+
+async function performSearch(query) {
+    const activeTab = document.querySelector('.tab.active');
+    const listId = activeTab?.dataset.tab === 'favorites' ? 'favorites-list' : 'recent-list';
+    const list = document.getElementById(listId);
+    const emptyId = activeTab?.dataset.tab === 'favorites' ? 'favorites-empty' : 'recent-empty';
+    const empty = document.getElementById(emptyId);
+
+    try {
+        const results = await invoke('search_articles', { query });
+
+        if (results.length === 0) {
+            list.classList.add('hidden');
+            empty.classList.remove('hidden');
+            empty.innerHTML = `
+                <i data-lucide="search" width="32" height="32"></i>
+                <p>No results for "<span class="query">${escapeHtml(query)}</span>"</p>
+                <p class="hint">Try different keywords</p>
+            `;
+        } else {
+            list.innerHTML = results.map(article => renderArticleListItem(article)).join('');
+            list.classList.remove('hidden');
+            empty.classList.add('hidden');
+            attachArticleListHandlers(list);
+        }
+    } catch (err) {
+        console.error('Search failed:', err);
+        list.classList.add('hidden');
+        empty.classList.remove('hidden');
+        empty.innerHTML = `
+            <i data-lucide="alert-triangle" width="32" height="32"></i>
+            <p>Search failed</p>
+            <p class="hint">${escapeHtml(err.toString())}</p>
+        `;
+    }
+
+    // Re-init icons for new content
+    if (window.lucide) lucide.createIcons();
 }
 
 // Utilities

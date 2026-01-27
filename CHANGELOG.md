@@ -2,6 +2,21 @@
 
 All notable changes to Wallflower will be documented in this file.
 
+## [0.3.0] - 2025-01-26
+
+### Added
+- Full-text search with SQLite FTS5 across article titles, authors, and content
+- Search overlay with Cmd+K shortcut and live results as you type
+- Sort articles by Recent, Title, Author, or Date Added
+- Animated splash screen with rotating logo and version badge
+- Arrow key navigation for article list (up/down to select, Enter to open)
+- Escape key hierarchy: close modal → blur input → clear selection → go home
+
+### Changed
+- Prioritized working Freedium mirror endpoint
+- Article list items now have rounded corners (28px)
+- Improved error handling for search queries with special characters
+
 ## [0.2.0] - 2025-01-25
 
 ### Added

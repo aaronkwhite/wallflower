@@ -1,6 +1,6 @@
 [package]
 name = "wallflower"
-version = "0.2.5"
+version = "0.3.0"
 edition = "2021"
 description = "A quiet reader for paywalled articles"
 authors = ["Wallflower"]
@@ -25,6 +25,7 @@ directories = "6"
 urlencoding = "2"
 thiserror = "2"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 regex = "1"
 url = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }

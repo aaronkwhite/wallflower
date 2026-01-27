@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="icons/logos/wallflower-logo.svg" alt="Wallflower" width="120">
+  <img src="icons/logos/wallflower-logo.svg" alt="Wallflower" width="200">
 </p>
 
 # Wallflower
 
-![Version](https://img.shields.io/badge/version-0.2.5-blue)
+![Version](https://img.shields.io/badge/version-0.3.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 A quiet reader for consuming articles. Cross-platform desktop application for macOS, Windows, and Linux.
@@ -14,11 +14,13 @@ Wallflower is a lightweight client wrapper for [Freedium](https://freedium.cfd),
 ## Features
 
 - **Clean Reading Experience** - Distraction-free article viewing with customizable themes
+- **Full-Text Search** - Search across article titles, authors, and content with SQLite FTS5
 - **Local Caching** - Articles cached locally in SQLite for offline reading
 - **Favorites & History** - Track what you've read and save articles for later
 - **Export Options** - Save articles as Markdown files or copy to clipboard
 - **Cross-Platform** - Native builds for macOS, Windows, and Linux
 - **Multiple Themes** - System, Light, Dark, and Sepia modes
+- **Keyboard Navigation** - Full keyboard support with arrow keys and shortcuts
 - **Customizable** - Adjustable font size and content width
 
 ## Tech Stack
@@ -30,7 +32,12 @@ Wallflower is a lightweight client wrapper for [Freedium](https://freedium.cfd),
 
 ## Installation
 
-Download the latest `.dmg` from [Releases](../../releases) and drag to Applications.
+Download the latest `.dmg` from [Releases](https://github.com/aaronkwhite/wallflower/releases):
+
+- **Apple Silicon (M1/M2/M3)**: `Wallflower_x.x.x_aarch64.dmg`
+- **Intel**: `Wallflower_x.x.x_x64.dmg`
+
+Open the DMG and drag Wallflower to your Applications folder.
 
 ### Building from Source
 
@@ -52,7 +59,11 @@ cargo tauri build
 
 | Shortcut | Action |
 |----------|--------|
+| `Cmd+K` | Open search |
 | `Cmd+L` | Focus URL input |
+| `↑` / `↓` | Navigate article list |
+| `Enter` | Open selected article |
+| `Escape` | Close/blur/clear selection |
 | `Cmd+R` | Refresh article |
 | `Cmd+D` | Toggle favorite |
 | `Cmd+S` | Save as Markdown |

@@ -14,6 +14,14 @@ use database::Database;
 use freedium::FreediumClient;
 
 fn main() {
+    // Initialize logging
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("wallflower=debug".parse().unwrap())
+        )
+        .init();
+
     // Load configuration
     let config = AppConfig::load();
 
@@ -45,6 +53,7 @@ fn main() {
             commands::validate_url,
             commands::get_history,
             commands::get_favorites,
+            commands::search_articles,
             commands::toggle_favorite,
             commands::delete_from_history,
             commands::clear_cache,
