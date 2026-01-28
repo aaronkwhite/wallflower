@@ -39,6 +39,11 @@ Download the latest `.dmg` from [Releases](https://github.com/aaronkwhite/wallfl
 
 Open the DMG and drag Wallflower to your Applications folder.
 
+> **Note:** Since the app isn't code-signed, macOS may block it. If you see "damaged" or "unidentified developer" warnings, run:
+> ```bash
+> xattr -cr /Applications/Wallflower.app
+> ```
+
 ### Building from Source
 
 ```bash
