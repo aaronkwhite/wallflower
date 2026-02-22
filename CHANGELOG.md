@@ -2,6 +2,12 @@
 
 All notable changes to Wallflower will be documented in this file.
 
+## [0.3.2] - 2026-02-21
+
+### Added
+- Infinite scroll for history list — loads more articles as you scroll down
+- Database import from backup files via Settings
+
 ## [0.3.1] - 2025-01-27
 
 ### Added

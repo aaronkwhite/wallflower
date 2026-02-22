@@ -60,6 +60,7 @@ fn main() {
             commands::save_markdown_file,
             commands::export_database,
             commands::export_as_markdown,
+            commands::import_database,
         ])
         .setup(|app| {
             // Enable back/forward swipe gestures on macOS

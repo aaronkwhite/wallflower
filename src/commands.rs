@@ -131,9 +131,10 @@ pub fn get_cached_article(url: String, state: State<'_, AppState>) -> Result<Opt
 
 /// Get recent reading history
 #[tauri::command]
-pub fn get_history(limit: Option<i32>, state: State<'_, AppState>) -> Result<Vec<HistoryEntry>, String> {
+pub fn get_history(limit: Option<i32>, offset: Option<i32>, state: State<'_, AppState>) -> Result<Vec<HistoryEntry>, String> {
     let limit = limit.unwrap_or(50);
-    state.database.get_history(limit).map_err(|e| e.to_string())
+    let offset = offset.unwrap_or(0);
+    state.database.get_history(limit, offset).map_err(|e| e.to_string())
 }
 
 /// Get favorite articles
@@ -241,6 +242,12 @@ pub fn export_database(path: String) -> Result<(), String> {
     let db_path = Database::get_db_path();
     std::fs::copy(&db_path, &path).map_err(|e| format!("Failed to export database: {}", e))?;
     Ok(())
+}
+
+/// Import articles from a backup database file
+#[tauri::command]
+pub fn import_database(path: String, state: State<'_, AppState>) -> Result<i32, String> {
+    state.database.import_database(&path).map_err(|e| e.to_string())
 }
 
 /// Export all articles as Markdown files to a directory

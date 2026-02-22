@@ -16,6 +16,12 @@ let searchDebounceTimer = null;
 let currentSortOrder = 'recent'; // recent, title, author, added
 let selectedListIndex = -1; // Currently selected item in article list
 
+// Infinite scroll state
+const PAGE_SIZE = 50;
+let recentOffset = 0;
+let isLoadingMore = false;
+let hasMoreArticles = true;
+
 // Sort icon mapping
 const sortIcons = {
     recent: 'clock',
@@ -189,6 +195,7 @@ function setupEventListeners() {
     // Settings modal buttons
     document.getElementById('close-settings-btn').addEventListener('click', closeSettings);
     document.getElementById('check-endpoints-btn').addEventListener('click', checkEndpoints);
+    document.getElementById('import-db-btn').addEventListener('click', importDatabase);
     document.getElementById('export-db-btn').addEventListener('click', exportDatabase);
     document.getElementById('export-md-btn').addEventListener('click', exportAsMarkdown);
 
@@ -284,6 +291,21 @@ function setupEventListeners() {
             articleContainer.classList.remove('scrolled-past-hero');
         }
     });
+
+    // Infinite scroll for recent articles
+    const startContent = document.querySelector('.start-content');
+    if (startContent) {
+        startContent.addEventListener('scroll', () => {
+            const activeTab = document.querySelector('.tab.active');
+            if (activeTab?.dataset.tab !== 'recent') return;
+            if (isSearchMode) return;
+
+            const { scrollTop, scrollHeight, clientHeight } = startContent;
+            if (scrollHeight - scrollTop - clientHeight < 200) {
+                loadMoreRecentArticles();
+            }
+        });
+    }
 }
 
 function setupWindowDrag() {
@@ -515,8 +537,12 @@ async function loadRecentArticles() {
     // Clear selection when reloading list
     selectedListIndex = -1;
 
+    // Reset infinite scroll state
+    recentOffset = 0;
+    hasMoreArticles = true;
+
     try {
-        const articles = await invoke('get_history', { limit: 50 });
+        const articles = await invoke('get_history', { limit: PAGE_SIZE, offset: 0 });
         if (articles.length === 0) {
             list.classList.add('hidden');
             empty.classList.remove('hidden');
@@ -526,6 +552,8 @@ async function loadRecentArticles() {
             list.classList.remove('hidden');
             empty.classList.add('hidden');
             attachArticleListHandlers(list);
+            recentOffset = articles.length;
+            hasMoreArticles = articles.length === PAGE_SIZE;
         }
     } catch (err) {
         console.error('Failed to load history:', err);
@@ -535,6 +563,28 @@ async function loadRecentArticles() {
 
     // Re-init icons for new content
     if (window.lucide) lucide.createIcons();
+}
+
+async function loadMoreRecentArticles() {
+    if (isLoadingMore || !hasMoreArticles) return;
+
+    isLoadingMore = true;
+    try {
+        const articles = await invoke('get_history', { limit: PAGE_SIZE, offset: recentOffset });
+        if (articles.length > 0) {
+            const list = document.getElementById('recent-list');
+            const sorted = sortArticles(articles, currentSortOrder);
+            list.insertAdjacentHTML('beforeend', sorted.map(article => renderArticleListItem(article)).join(''));
+            attachArticleListHandlers(list);
+            if (window.lucide) lucide.createIcons();
+            recentOffset += articles.length;
+        }
+        hasMoreArticles = articles.length === PAGE_SIZE;
+    } catch (err) {
+        console.error('Failed to load more articles:', err);
+    } finally {
+        isLoadingMore = false;
+    }
 }
 
 async function loadFavorites() {
@@ -1050,6 +1100,47 @@ async function checkEndpoints() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Check Status';
+    }
+}
+
+// Import database file
+async function importDatabase() {
+    const btn = document.getElementById('import-db-btn');
+    btn.disabled = true;
+    btn.textContent = 'Importing...';
+
+    try {
+        const filePath = await open({
+            filters: [{
+                name: 'SQLite Database',
+                extensions: ['db']
+            }]
+        });
+
+        if (filePath) {
+            const count = await invoke('import_database', { path: filePath });
+            if (count === 0) {
+                btn.textContent = 'No new articles found';
+            } else {
+                btn.textContent = `Imported ${count} articles!`;
+            }
+            // Refresh lists if on start page
+            await loadRecentArticles();
+            await loadFavorites();
+            setTimeout(() => {
+                btn.textContent = 'Import Database';
+            }, 2000);
+        } else {
+            btn.textContent = 'Import Database';
+        }
+    } catch (err) {
+        console.error('Failed to import database:', err);
+        btn.textContent = 'Import Failed';
+        setTimeout(() => {
+            btn.textContent = 'Import Database';
+        }, 2000);
+    } finally {
+        btn.disabled = false;
     }
 }
 

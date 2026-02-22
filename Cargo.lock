@@ -4814,7 +4814,7 @@ dependencies = [
 
 [[package]]
 name = "wallflower"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "chrono",
  "directories",
@@ -4831,6 +4831,7 @@ dependencies = [
  "tauri-plugin-clipboard-manager",
  "tauri-plugin-dialog",
  "tauri-plugin-shell",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "toml 0.8.2",

@@ -397,17 +397,17 @@ impl Database {
     }
 
     /// Get recent articles (history)
-    pub fn get_history(&self, limit: i32) -> Result<Vec<HistoryEntry>, DatabaseError> {
+    pub fn get_history(&self, limit: i32, offset: i32) -> Result<Vec<HistoryEntry>, DatabaseError> {
         let conn = self.conn.lock().map_err(|_| DatabaseError::LockError)?;
 
         let mut stmt = conn.prepare(
             "SELECT id, url, title, author, author_url, header_image_url, last_read_at, read_count, is_favorite
              FROM articles
              ORDER BY last_read_at DESC
-             LIMIT ?"
+             LIMIT ?1 OFFSET ?2"
         )?;
 
-        let entries = stmt.query_map(params![limit], |row| {
+        let entries = stmt.query_map(params![limit, offset], |row| {
             Ok(HistoryEntry {
                 id: row.get(0)?,
                 url: row.get(1)?,
@@ -585,6 +585,54 @@ impl Database {
 
         entries.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
+
+    /// Open a database at a specific path (for testing)
+    #[cfg(test)]
+    fn open_at(path: &std::path::Path) -> Result<Self, DatabaseError> {
+        let conn = Connection::open(path)?;
+        let db = Self {
+            conn: Mutex::new(conn),
+        };
+        db.init_schema()?;
+        Ok(db)
+    }
+
+    /// Import articles from a backup database file (append-only, skips duplicates)
+    pub fn import_database(&self, backup_path: &str) -> Result<i32, DatabaseError> {
+        let conn = self.conn.lock().map_err(|_| DatabaseError::LockError)?;
+        conn.execute("ATTACH DATABASE ?1 AS backup", params![backup_path])?;
+
+        // Validate backup has an articles table
+        let has_table: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM backup.sqlite_master WHERE type='table' AND name='articles'",
+                [],
+                |row| row.get::<_, i32>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        if !has_table {
+            conn.execute_batch("DETACH DATABASE backup")?;
+            return Err(DatabaseError::InvalidBackup);
+        }
+
+        // Append-only: INSERT OR IGNORE skips rows where url already exists
+        let imported = conn.execute(
+            "INSERT OR IGNORE INTO articles
+                (url, title, author, author_url, header_image_url,
+                 content_html, content_text, fetched_from,
+                 cached_at, last_read_at, read_count, is_favorite)
+            SELECT url, title, author, author_url, header_image_url,
+                 content_html, content_text, fetched_from,
+                 cached_at, last_read_at, read_count, is_favorite
+            FROM backup.articles",
+            [],
+        )?;
+
+        conn.execute_batch("DETACH DATABASE backup")?;
+        Ok(imported as i32)
+    }
 }
 
 /// Database errors
@@ -601,6 +649,9 @@ pub enum DatabaseError {
 
     #[error("Article not found")]
     NotFound,
+
+    #[error("Invalid backup file: no articles table found")]
+    InvalidBackup,
 }
 
 #[cfg(test)]
@@ -674,5 +725,98 @@ mod tests {
             assert!(!sanitized.contains("OR ") || sanitized.contains("\"OR\""));
             assert!(!sanitized.contains("AND ") || sanitized.contains("\"AND\""));
         }
+    }
+
+    /// Helper: insert a test article directly into a database
+    fn insert_test_article(db: &Database, url: &str, title: &str) {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO articles (url, title, author, content_html, content_text, fetched_from, cached_at, last_read_at)
+             VALUES (?1, ?2, 'Test Author', '<p>Hello</p>', 'Hello', 'https://freedium.cfd', '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')",
+            params![url, title],
+        ).unwrap();
+    }
+
+    #[test]
+    fn test_import_database_appends_articles() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().join("main.db");
+        let backup_path = dir.path().join("backup.db");
+
+        // Create main DB with one article
+        let main_db = Database::open_at(&main_path).unwrap();
+        insert_test_article(&main_db, "https://medium.com/article-1", "Article 1");
+
+        // Create backup DB with two articles (one overlapping)
+        let backup_db = Database::open_at(&backup_path).unwrap();
+        insert_test_article(&backup_db, "https://medium.com/article-1", "Article 1");
+        insert_test_article(&backup_db, "https://medium.com/article-2", "Article 2");
+        drop(backup_db);
+
+        // Import should add only the new article
+        let imported = main_db.import_database(backup_path.to_str().unwrap()).unwrap();
+        assert_eq!(imported, 1);
+
+        // Verify total count is 2
+        let all = main_db.get_all_articles().unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_import_database_skips_all_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().join("main.db");
+        let backup_path = dir.path().join("backup.db");
+
+        // Both DBs have the same article
+        let main_db = Database::open_at(&main_path).unwrap();
+        insert_test_article(&main_db, "https://medium.com/article-1", "Article 1");
+
+        let backup_db = Database::open_at(&backup_path).unwrap();
+        insert_test_article(&backup_db, "https://medium.com/article-1", "Article 1");
+        drop(backup_db);
+
+        let imported = main_db.import_database(backup_path.to_str().unwrap()).unwrap();
+        assert_eq!(imported, 0);
+    }
+
+    #[test]
+    fn test_import_database_invalid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().join("main.db");
+        let bad_path = dir.path().join("not-a-db.db");
+
+        let main_db = Database::open_at(&main_path).unwrap();
+
+        // Create an empty SQLite DB (no articles table)
+        let conn = Connection::open(&bad_path).unwrap();
+        conn.execute_batch("CREATE TABLE other (id INTEGER)").unwrap();
+        drop(conn);
+
+        let result = main_db.import_database(bad_path.to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid backup"));
+    }
+
+    #[test]
+    fn test_import_database_fts_indexing() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_path = dir.path().join("main.db");
+        let backup_path = dir.path().join("backup.db");
+
+        let main_db = Database::open_at(&main_path).unwrap();
+
+        // Create backup with a searchable article
+        let backup_db = Database::open_at(&backup_path).unwrap();
+        insert_test_article(&backup_db, "https://medium.com/rust-article", "Learning Rust");
+        drop(backup_db);
+
+        let imported = main_db.import_database(backup_path.to_str().unwrap()).unwrap();
+        assert_eq!(imported, 1);
+
+        // Search for the imported article by title
+        let results = main_db.search_articles("Rust").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Learning Rust");
     }
 }
