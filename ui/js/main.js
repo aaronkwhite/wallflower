@@ -4,6 +4,7 @@ const { getCurrentWindow } = window.__TAURI__.window;
 const { save, open } = window.__TAURI__.dialog;
 const { writeText } = window.__TAURI__.clipboardManager;
 const { getVersion } = window.__TAURI__.app;
+const { open: openUrl } = window.__TAURI__.shell;
 
 // Application state
 let config = null;
@@ -397,15 +398,13 @@ function setupKeyboardShortcuts() {
             urlInput.select();
         }
 
-        // Cmd+K to open search (only on start page)
+        // Cmd+K to open/close search (works from any view)
         if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
             e.preventDefault();
-            if (!startPage.classList.contains('hidden')) {
-                if (isSearchMode) {
-                    closeSearch();
-                } else {
-                    openSearch();
-                }
+            if (isSearchMode) {
+                closeSearch();
+            } else {
+                openSearch();
             }
         }
 
@@ -907,6 +906,7 @@ function renderArticle(article) {
     }
 
     document.getElementById('article-content').innerHTML = article.content_html;
+    replaceVideoEmbeds();
     document.getElementById('original-link').href = article.url || article.original_url;
 
     try {
@@ -927,6 +927,90 @@ function renderArticle(article) {
 
     // Re-init icons
     if (window.lucide) lucide.createIcons();
+}
+
+// Replace video iframes with thumbnail cards that open in browser
+function replaceVideoEmbeds() {
+    const content = document.getElementById('article-content');
+    const iframes = content.querySelectorAll('iframe');
+
+    iframes.forEach(iframe => {
+        const src = iframe.getAttribute('src') || '';
+        let videoUrl = null;
+        let videoId = null;
+        let platform = null;
+
+        // YouTube (direct or via embedly)
+        const ytMatch = src.match(/youtube\.com\/embed\/([^?&#]+)/) ||
+                         src.match(/youtube-nocookie\.com\/embed\/([^?&#]+)/);
+        if (ytMatch) {
+            videoId = ytMatch[1];
+            videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+            platform = 'youtube';
+        }
+
+        // YouTube via embedly wrapper
+        if (!videoUrl) {
+            const embedlyYt = src.match(/embedly\.com\/.*youtube\.com%2Fembed%2F([^%&]+)/);
+            if (embedlyYt) {
+                videoId = embedlyYt[1];
+                videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+                platform = 'youtube';
+            }
+        }
+
+        // Vimeo
+        if (!videoUrl) {
+            const vimeoMatch = src.match(/player\.vimeo\.com\/video\/([^?&#]+)/);
+            if (vimeoMatch) {
+                videoId = vimeoMatch[1];
+                videoUrl = `https://vimeo.com/${videoId}`;
+                platform = 'vimeo';
+            }
+        }
+
+        if (!videoUrl) return;
+
+        const playSvg = '<svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>';
+        const platformName = platform === 'youtube' ? 'YouTube' : 'Vimeo';
+        const playClass = platform === 'vimeo' ? ' vimeo' : '';
+
+        const card = document.createElement('div');
+        card.className = 'video-card';
+
+        if (platform === 'youtube') {
+            // YouTube provides direct thumbnail URLs
+            const thumbUrl = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+            const fallbackUrl = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+            card.innerHTML = `
+                <img class="video-card-thumbnail" src="${thumbUrl}" onerror="this.src='${fallbackUrl}'" alt="Video thumbnail">
+                <div class="video-card-play${playClass}">${playSvg}</div>
+                <div class="video-card-badge">
+                    <i data-lucide="external-link" width="11" height="11"></i>
+                    ${platformName}
+                </div>
+            `;
+        } else {
+            // Vimeo: no easy thumbnail URL, use play button on dark background
+            card.innerHTML = `
+                <div class="video-card-play${playClass}">${playSvg}</div>
+                <div class="video-card-badge">
+                    <i data-lucide="external-link" width="11" height="11"></i>
+                    ${platformName}
+                </div>
+            `;
+        }
+
+        card.addEventListener('click', () => openUrl(videoUrl));
+
+        // Replace the iframe's parent figure if it exists, otherwise just the iframe
+        const figure = iframe.closest('figure');
+        if (figure) {
+            figure.replaceWith(card);
+        } else {
+            iframe.replaceWith(card);
+        }
+    });
 }
 
 // Favorites
@@ -1304,6 +1388,10 @@ function sortArticles(articles, sortOrder) {
 // ===========================================
 
 function openSearch() {
+    // If not on start page, go there first
+    if (startPage.classList.contains('hidden')) {
+        showStartPage();
+    }
     isSearchMode = true;
     navBar.classList.add('search-active');
     searchOverlay.classList.remove('hidden');

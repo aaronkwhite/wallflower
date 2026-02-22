@@ -2,6 +2,18 @@
 
 All notable changes to Wallflower will be documented in this file.
 
+## [0.3.4] - 2026-02-22
+
+### Added
+- YouTube video thumbnails with play button overlay — click to open in browser
+- Vimeo embed detection with external playback link
+- Cmd+K search now works from article view (navigates back to start page with search open)
+
+### Fixed
+- Search overlay now dismisses when opening an article from search results
+- Escape key now works to dismiss the error screen and return to start page
+- Search button click from article view now works correctly
+
 ## [0.3.3] - 2026-02-21
 
 ### Fixed
