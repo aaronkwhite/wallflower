@@ -383,6 +383,8 @@ function setupKeyboardShortcuts() {
             } else if (selectedListIndex >= 0) {
                 // Clear list selection
                 clearListSelection();
+            } else if (!error.classList.contains('hidden')) {
+                showStartPage();
             } else if (!articleContainer.classList.contains('hidden')) {
                 showStartPage();
             }
@@ -507,6 +509,9 @@ function openSelectedArticle() {
     if (selectedListIndex >= 0 && selectedListIndex < items.length) {
         const url = items[selectedListIndex].dataset.url;
         if (url) {
+            if (isSearchMode) {
+                closeSearch();
+            }
             urlInput.value = url;
             handleFetch();
         }
@@ -654,6 +659,9 @@ function attachArticleListHandlers(list) {
     list.querySelectorAll('.article-list-item').forEach(item => {
         item.addEventListener('click', (e) => {
             if (e.target.closest('.article-list-item-actions')) return;
+            if (isSearchMode) {
+                closeSearch();
+            }
             const url = item.dataset.url;
             urlInput.value = url;
             handleFetch();

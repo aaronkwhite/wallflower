@@ -2,6 +2,12 @@
 
 All notable changes to Wallflower will be documented in this file.
 
+## [0.3.3] - 2026-02-21
+
+### Fixed
+- Search overlay now dismisses when opening an article from search results
+- Escape key now works to dismiss the error screen and return to start page
+
 ## [0.3.2] - 2026-02-21
 
 ### Added
