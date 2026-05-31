@@ -1,6 +1,7 @@
 use reqwest::Client;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::time::Duration;
 
 /// Represents a fetched and parsed Medium article
@@ -47,7 +48,13 @@ impl FreediumClient {
         let mut last_error = None;
 
         for endpoint in &self.endpoints {
-            let url = format!("{}{}", endpoint, urlencoding::encode(medium_url));
+            // Freedium is a SvelteKit SSR app: the rendered article is served as
+            // devalue-encoded JSON at <urlencoded medium url>/__data.json.
+            let url = format!(
+                "{}{}/__data.json",
+                endpoint,
+                urlencoding::encode(medium_url)
+            );
 
             match self.try_fetch(&url, medium_url, endpoint).await {
                 Ok(article) => return Ok(article),
@@ -75,153 +82,95 @@ impl FreediumClient {
             return Err(FetchError::HttpError(response.status().as_u16()));
         }
 
-        let html = response.text().await?;
-        self.parse_freedium_html(&html, original_url, endpoint)
+        let body = response.text().await?;
+        self.parse_data_json(&body, original_url, endpoint)
     }
 
-    /// Parse the HTML from Freedium and extract article content
-    fn parse_freedium_html(
+    /// Parse Freedium's SvelteKit `__data.json` response and extract the article.
+    ///
+    /// The page itself only ships a loading skeleton; the rendered article is
+    /// streamed as a "chunk" whose `data` array uses devalue's flattened-index
+    /// encoding. We locate that chunk, decode it, and read the `html` body plus
+    /// the `article` metadata (`title`, `author.name`).
+    fn parse_data_json(
         &self,
-        html: &str,
+        body: &str,
         original_url: &str,
         endpoint: &str,
     ) -> Result<Article, FetchError> {
-        let document = Html::parse_document(html);
+        // The response is newline-delimited JSON; the page payload is a "chunk".
+        let mut root = None;
+        for line in body.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let value: Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if value.get("type").and_then(Value::as_str) == Some("chunk") {
+                if let Some(data) = value.get("data").and_then(Value::as_array) {
+                    root = Some(devalue_resolve(data, 0, 0));
+                    break;
+                }
+            }
+        }
 
-        // Try multiple selectors for title (Freedium's HTML structure may vary)
-        let title = self
-            .extract_text(&document, "h1.main-title")
-            .or_else(|_| self.extract_text(&document, "h1.post-title"))
-            .or_else(|_| self.extract_text(&document, "article h1"))
-            .or_else(|_| self.extract_text(&document, ".post-full-title"))
-            .or_else(|_| self.extract_text(&document, "h1"))
-            .unwrap_or_else(|_| "Untitled Article".to_string());
+        let root = root.ok_or_else(|| {
+            FetchError::ParseError("No article chunk found in __data.json".to_string())
+        })?;
 
-        // Extract author name and URL from the author info section
-        // Freedium uses: <a href="https://medium.com/@username" ...>Author Name</a>
-        let (author, author_url) = self
-            .extract_author_info(&document)
-            .unwrap_or_else(|| ("Unknown Author".to_string(), None));
+        // Surface a server-side render failure instead of rendering an empty page.
+        let html = root
+            .get("html")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if html.trim().is_empty() {
+            return Err(FetchError::ParseError(
+                "Freedium returned no rendered article content".to_string(),
+            ));
+        }
 
-        // Extract header/preview image
-        // Freedium uses: <img alt="Preview image" ... src="...">
-        let header_image_url = self.extract_header_image(&document);
+        let article = root.get("article");
+        let title = article
+            .and_then(|a| a.get("title"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("Untitled Article")
+            .to_string();
+        let author = article
+            .and_then(|a| a.get("author"))
+            .and_then(|a| a.get("name"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("Unknown Author")
+            .to_string();
 
-        // Try multiple selectors for content
-        let content = self
-            .extract_html(&document, ".main-content")
-            .or_else(|_| self.extract_html(&document, "article"))
-            .or_else(|_| self.extract_html(&document, ".post-content"))
-            .or_else(|_| self.extract_html(&document, ".article-content"))
-            .or_else(|_| self.extract_html(&document, "main"))
-            .map_err(|_| FetchError::ParseError("Could not find article content".to_string()))?;
+        // Header/hero image. Freedium serves images as host-relative paths
+        // (e.g. "/img/700/0*abc"), so make it absolute against the endpoint.
+        let header_image_url = article
+            .and_then(|a| a.get("postImage"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| absolutize_url(s, endpoint));
 
-        // Clean up the content
-        let cleaned_content = self.clean_content(&content);
+        // Inline article images are host-relative too (src + srcset); rewrite
+        // them against the endpoint host so the webview can load them.
+        let html = absolutize_img_paths(&html, endpoint);
+        let cleaned_content = self.clean_content(&html);
 
         Ok(Article {
             title,
             author,
-            author_url,
+            // The API exposes only the author's name, not a profile URL.
+            author_url: None,
             header_image_url,
             content_html: cleaned_content,
             original_url: original_url.to_string(),
             fetched_from: endpoint.to_string(),
         })
-    }
-
-    /// Extract author name and profile URL
-    fn extract_author_info(&self, doc: &Html) -> Option<(String, Option<String>)> {
-        // Look for the author link in the author info section
-        // Pattern: <a href="https://medium.com/@username" ...>Author Name</a>
-        let selector = Selector::parse(".flex-grow a[href*='medium.com/@']").ok()?;
-
-        if let Some(element) = doc.select(&selector).next() {
-            let name = element.text().collect::<String>().trim().to_string();
-            let url = element.value().attr("href").map(String::from);
-
-            if !name.is_empty() && name != "Follow" {
-                return Some((name, url));
-            }
-        }
-
-        // Fallback: try other author selectors
-        let fallback_selectors = [
-            ".author-name",
-            ".post-author",
-            "[class*='author'] a",
-        ];
-
-        for selector_str in fallback_selectors {
-            if let Ok(selector) = Selector::parse(selector_str) {
-                if let Some(element) = doc.select(&selector).next() {
-                    let name = element.text().collect::<String>().trim().to_string();
-                    let url = element.value().attr("href").map(String::from);
-                    if !name.is_empty() {
-                        return Some((name, url));
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Extract the header/preview image URL
-    fn extract_header_image(&self, doc: &Html) -> Option<String> {
-        // Look for the preview image before the title
-        // Pattern: <img alt="Preview image" ... src="...">
-        if let Ok(selector) = Selector::parse("img[alt='Preview image']") {
-            if let Some(element) = doc.select(&selector).next() {
-                if let Some(src) = element.value().attr("src") {
-                    return Some(src.to_string());
-                }
-            }
-        }
-
-        // Fallback: look for first large image in the header area
-        if let Ok(selector) = Selector::parse(".font-sans img[src*='miro.medium.com']") {
-            if let Some(element) = doc.select(&selector).next() {
-                if let Some(src) = element.value().attr("src") {
-                    return Some(src.to_string());
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Extract text content from the first element matching any of the selectors
-    fn extract_text(&self, doc: &Html, selector_str: &str) -> Result<String, FetchError> {
-        let selector = Selector::parse(selector_str)
-            .map_err(|_| FetchError::ParseError(format!("Invalid selector: {}", selector_str)))?;
-
-        if let Some(element) = doc.select(&selector).next() {
-            let text = element.text().collect::<String>().trim().to_string();
-            if !text.is_empty() {
-                return Ok(text);
-            }
-        }
-
-        Err(FetchError::ParseError(format!(
-            "Could not find element: {}",
-            selector_str
-        )))
-    }
-
-    /// Extract HTML content from the first element matching any of the selectors
-    fn extract_html(&self, doc: &Html, selector_str: &str) -> Result<String, FetchError> {
-        let selector = Selector::parse(selector_str)
-            .map_err(|_| FetchError::ParseError(format!("Invalid selector: {}", selector_str)))?;
-
-        if let Some(element) = doc.select(&selector).next() {
-            return Ok(element.inner_html());
-        }
-
-        Err(FetchError::ParseError(format!(
-            "Could not find element: {}",
-            selector_str
-        )))
     }
 
     /// Clean up article content HTML
@@ -271,6 +220,136 @@ impl FreediumClient {
     }
 }
 
+/// Join a possibly host-relative URL against the endpoint base.
+///
+/// Freedium serves images as paths like `/img/700/0*abc`; absolute URLs
+/// (`http://`, `https://`, protocol-relative `//`, or `data:`) are left as-is.
+fn absolutize_url(url: &str, endpoint: &str) -> String {
+    let u = url.trim();
+    if u.starts_with("http://")
+        || u.starts_with("https://")
+        || u.starts_with("//")
+        || u.starts_with("data:")
+    {
+        return u.to_string();
+    }
+    format!("{}{}", endpoint.trim_end_matches('/'), u)
+}
+
+/// Rewrite host-relative `src="/..."` and `srcset="..."` image references in
+/// `html` so they resolve against the endpoint host inside the webview.
+fn absolutize_img_paths(html: &str, endpoint: &str) -> String {
+    let base = endpoint.trim_end_matches('/');
+
+    // src="/img/..." -> src="<base>/img/..."  (only paths starting with a single
+    // slash; "//" is protocol-relative and already absolute).
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    let needle = "src=\"/";
+    while let Some(pos) = rest.find(needle) {
+        out.push_str(&rest[..pos]);
+        // Keep `src="` then insert base before the leading slash.
+        out.push_str("src=\"");
+        let after = &rest[pos + needle.len() - 1..]; // points at the leading '/'
+        if after.starts_with("//") {
+            // protocol-relative; leave untouched
+            out.push('/');
+            rest = &after[1..];
+        } else {
+            out.push_str(base);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+
+    // srcset entries are comma-separated "<url> <descriptor>"; rewrite each
+    // host-relative URL. Process the accumulated string in place.
+    rewrite_srcset(&out, base)
+}
+
+/// Rewrite host-relative URLs inside every `srcset="..."` attribute.
+fn rewrite_srcset(html: &str, base: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    let attr = "srcset=\"";
+    while let Some(pos) = rest.find(attr) {
+        out.push_str(&rest[..pos + attr.len()]);
+        let after = &rest[pos + attr.len()..];
+        let end = match after.find('"') {
+            Some(e) => e,
+            None => {
+                rest = after;
+                break;
+            }
+        };
+        let value = &after[..end];
+        let rewritten = value
+            .split(',')
+            .map(|candidate| {
+                let candidate = candidate.trim();
+                let mut parts = candidate.splitn(2, char::is_whitespace);
+                let url = parts.next().unwrap_or("");
+                let descriptor = parts.next();
+                let abs = if url.starts_with('/') && !url.starts_with("//") {
+                    format!("{}{}", base, url)
+                } else {
+                    url.to_string()
+                };
+                match descriptor {
+                    Some(d) => format!("{} {}", abs, d),
+                    None => abs,
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&rewritten);
+        out.push('"');
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Resolve a value from devalue's flattened-array encoding.
+///
+/// devalue stores every value in a single flat array; container fields and
+/// array elements hold the *index* of their value rather than the value itself.
+/// We follow those indices to rebuild a normal [`serde_json::Value`]. `depth`
+/// guards against cyclic references.
+fn devalue_resolve(arr: &[Value], index: i64, depth: usize) -> Value {
+    if depth > 64 || index < 0 {
+        return Value::Null;
+    }
+    let node = match arr.get(index as usize) {
+        Some(node) => node,
+        None => return Value::Null,
+    };
+    match node {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (key, child) in map {
+                let resolved = match child.as_i64() {
+                    Some(i) => devalue_resolve(arr, i, depth + 1),
+                    None => child.clone(),
+                };
+                out.insert(key.clone(), resolved);
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => {
+            let resolved = items
+                .iter()
+                .map(|item| match item.as_i64() {
+                    Some(i) => devalue_resolve(arr, i, depth + 1),
+                    None => item.clone(),
+                })
+                .collect();
+            Value::Array(resolved)
+        }
+        literal => literal.clone(),
+    }
+}
+
 /// Errors that can occur when fetching articles
 #[derive(Debug, thiserror::Error)]
 pub enum FetchError {
@@ -309,5 +388,106 @@ mod tests {
         let medium_url = "https://medium.com/@user/article-title-abc123";
         let encoded = urlencoding::encode(medium_url);
         assert!(encoded.contains("%3A%2F%2F"));
+    }
+
+    #[test]
+    fn test_parse_data_json_extracts_article() {
+        // Minimal reproduction of SvelteKit's __data.json devalue format: a
+        // "chunk" line whose `data` array references its values by index.
+        // index: 0=root 1=html 2=markdown 3=article 4=cacheStatus 5=renderTimeMs
+        //        6=error 7=title 8=subtitle 9=author 10=name 11=avatar 12=postImage
+        let body = concat!(
+            "{\"type\":\"data\",\"nodes\":[null,{\"type\":\"data\",\"data\":[{\"slug\":1},\"https://medium.com/@x/y\"]}]}\n",
+            "{\"type\":\"chunk\",\"id\":1,\"data\":[",
+            "{\"html\":1,\"markdown\":2,\"article\":3,\"cacheStatus\":4,\"renderTimeMs\":5,\"error\":6},",
+            "\"<h3>Heading</h3><p>Hello world</p><img src=\\\"/img/4000/pic.png\\\" srcset=\\\"/img/700/pic.png 700w, /img/4000/pic.png 4000w\\\"><script>bad()</script>\",",
+            "\"# Heading\",",
+            "{\"title\":7,\"subtitle\":8,\"author\":9,\"postImage\":12},",
+            "\"hit\",",
+            "13,",
+            "null,",
+            "\"My Title\",",
+            "\"A subtitle\",",
+            "{\"name\":10,\"avatar\":11},",
+            "\"Jane Doe\",",
+            "\"/img/avatar.png\",",
+            "\"/img/700/hero.jpg\"",
+            "]}"
+        );
+        let client = FreediumClient::new(vec!["https://freedium-mirror.cfd/".to_string()]);
+        let article = client
+            .parse_data_json(body, "https://medium.com/@x/y", "https://freedium-mirror.cfd/")
+            .expect("should parse the chunk");
+
+        assert_eq!(article.title, "My Title");
+        assert_eq!(article.author, "Jane Doe");
+        assert!(article.content_html.contains("Hello world"));
+        // clean_content must strip the <script> tag.
+        assert!(!article.content_html.contains("bad()"));
+        assert_eq!(article.fetched_from, "https://freedium-mirror.cfd/");
+        // Header image comes from `postImage` and is absolutized.
+        assert_eq!(
+            article.header_image_url.as_deref(),
+            Some("https://freedium-mirror.cfd/img/700/hero.jpg")
+        );
+        // Inline image src + srcset are absolutized against the endpoint host.
+        assert!(article
+            .content_html
+            .contains("src=\"https://freedium-mirror.cfd/img/4000/pic.png\""));
+        assert!(article
+            .content_html
+            .contains("https://freedium-mirror.cfd/img/700/pic.png 700w"));
+        assert!(article
+            .content_html
+            .contains("https://freedium-mirror.cfd/img/4000/pic.png 4000w"));
+    }
+
+    #[test]
+    fn test_absolutize_url() {
+        let ep = "https://freedium-mirror.cfd/";
+        assert_eq!(
+            absolutize_url("/img/700/x.jpg", ep),
+            "https://freedium-mirror.cfd/img/700/x.jpg"
+        );
+        // Already-absolute URLs are untouched.
+        assert_eq!(
+            absolutize_url("https://miro.medium.com/x.png", ep),
+            "https://miro.medium.com/x.png"
+        );
+        assert_eq!(absolutize_url("//cdn.example/x.png", ep), "//cdn.example/x.png");
+        assert_eq!(
+            absolutize_url("data:image/png;base64,AAA", ep),
+            "data:image/png;base64,AAA"
+        );
+    }
+
+    #[test]
+    fn test_absolutize_img_paths_leaves_links_and_absolute() {
+        let ep = "https://freedium-mirror.cfd/";
+        let html = "<a href=\"/about\">x</a><img src=\"/img/1.png\"><img src=\"https://miro.medium.com/2.png\">";
+        let out = absolutize_img_paths(html, ep);
+        // Anchor href is NOT rewritten, only image src.
+        assert!(out.contains("href=\"/about\""));
+        assert!(out.contains("src=\"https://freedium-mirror.cfd/img/1.png\""));
+        assert!(out.contains("src=\"https://miro.medium.com/2.png\""));
+    }
+
+    #[test]
+    fn test_parse_data_json_errors_on_empty_render() {
+        // A chunk whose html resolves to an empty string is a failed render.
+        let body = "{\"type\":\"chunk\",\"id\":1,\"data\":[{\"html\":1},\"\"]}";
+        let client = FreediumClient::new(vec![]);
+        assert!(client.parse_data_json(body, "u", "e").is_err());
+    }
+
+    #[test]
+    fn test_devalue_resolve_nested() {
+        let arr: Vec<Value> = serde_json::from_str(
+            "[{\"a\":1,\"b\":2},\"x\",{\"c\":3},\"y\"]",
+        )
+        .unwrap();
+        let resolved = devalue_resolve(&arr, 0, 0);
+        assert_eq!(resolved["a"], serde_json::json!("x"));
+        assert_eq!(resolved["b"]["c"], serde_json::json!("y"));
     }
 }

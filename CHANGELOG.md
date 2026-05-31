@@ -2,6 +2,13 @@
 
 All notable changes to Wallflower will be documented in this file.
 
+## [0.3.5] - 2026-05-31
+
+### Fixed
+- Article fetching now works again after Freedium migrated to a SvelteKit SSR app — the parser reads the devalue-encoded `__data.json` payload instead of scraping HTML
+- Inline article images and header images now load correctly by resolving host-relative URLs against the Freedium endpoint
+- Empty server-side renders now surface an error instead of showing a blank article
+
 ## [0.3.4] - 2026-02-22
 
 ### Added

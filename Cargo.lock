@@ -4814,7 +4814,7 @@ dependencies = [
 
 [[package]]
 name = "wallflower"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "chrono",
  "directories",
