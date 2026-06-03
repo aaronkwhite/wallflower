@@ -2,6 +2,12 @@
 
 All notable changes to Wallflower will be documented in this file.
 
+## [0.3.6] - 2026-06-03
+
+### Fixed
+- Article fetching works again after Freedium changed its `__data.json` format — the parser now reads the page payload from the SvelteKit `nodes`/`eager` structure (with backward compatibility for the previous chunk format)
+- Removed the defunct `freedium.cfd` endpoint (no longer resolves); `freedium-mirror.cfd` is now the sole default, so failures report the real error instead of a misleading DNS error
+
 ## [0.3.5] - 2026-05-31
 
 ### Fixed

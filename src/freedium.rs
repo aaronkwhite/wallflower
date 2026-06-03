@@ -98,40 +98,69 @@ impl FreediumClient {
         original_url: &str,
         endpoint: &str,
     ) -> Result<Article, FetchError> {
-        // The response is newline-delimited JSON; the page payload is a "chunk".
+        // Collect every candidate devalue `data` array. Freedium's SvelteKit
+        // endpoint has shipped two shapes over time:
+        //   * a single `{"type":"data","nodes":[null,{"type":"data","data":[…]}]}`
+        //     object (current), and
+        //   * newline-delimited `{"type":"chunk","data":[…]}` lines (historical).
+        // Both encode their values with devalue's flattened-index format.
+        let values: Vec<Value> = body
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .collect();
+
+        let mut data_arrays: Vec<&[Value]> = Vec::new();
+        for value in &values {
+            collect_data_arrays(value, &mut data_arrays);
+        }
+
+        // Resolve each candidate and keep the first one that actually carries
+        // rendered article HTML. In the current format the page payload sits
+        // under the `eager` key; historically it was the resolved root itself.
         let mut root = None;
-        for line in body.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let value: Value = match serde_json::from_str(line) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            if value.get("type").and_then(Value::as_str) == Some("chunk") {
-                if let Some(data) = value.get("data").and_then(Value::as_array) {
-                    root = Some(devalue_resolve(data, 0, 0));
-                    break;
-                }
+        let mut saw_data = false;
+        for data in data_arrays {
+            saw_data = true;
+            let resolved = devalue_resolve(data, 0, 0);
+            let page = resolved
+                .get("eager")
+                .filter(|eager| eager.is_object())
+                .cloned()
+                .unwrap_or(resolved);
+            let has_html = page
+                .get("html")
+                .and_then(Value::as_str)
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            if has_html {
+                root = Some(page);
+                break;
             }
         }
 
-        let root = root.ok_or_else(|| {
-            FetchError::ParseError("No article chunk found in __data.json".to_string())
-        })?;
+        let root = match root {
+            Some(root) => root,
+            // Distinguish "format we don't recognize" from "server rendered an
+            // empty article" so failures are diagnosable.
+            None if saw_data => {
+                return Err(FetchError::ParseError(
+                    "Freedium returned no rendered article content".to_string(),
+                ))
+            }
+            None => {
+                return Err(FetchError::ParseError(
+                    "No article data found in __data.json".to_string(),
+                ))
+            }
+        };
 
-        // Surface a server-side render failure instead of rendering an empty page.
         let html = root
             .get("html")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        if html.trim().is_empty() {
-            return Err(FetchError::ParseError(
-                "Freedium returned no rendered article content".to_string(),
-            ));
-        }
 
         let article = root.get("article");
         let title = article
@@ -310,6 +339,24 @@ fn rewrite_srcset(html: &str, base: &str) -> String {
     out
 }
 
+/// Collect every devalue `data` array reachable from a parsed JSON value.
+///
+/// SvelteKit's `__data.json` exposes the array either directly on the value
+/// (`{"type":"chunk","data":[…]}`) or nested one level under `nodes`
+/// (`{"type":"data","nodes":[null,{"type":"data","data":[…]}]}`).
+fn collect_data_arrays<'a>(value: &'a Value, out: &mut Vec<&'a [Value]>) {
+    if let Some(data) = value.get("data").and_then(Value::as_array) {
+        out.push(data);
+    }
+    if let Some(nodes) = value.get("nodes").and_then(Value::as_array) {
+        for node in nodes {
+            if let Some(data) = node.get("data").and_then(Value::as_array) {
+                out.push(data);
+            }
+        }
+    }
+}
+
 /// Resolve a value from devalue's flattened-array encoding.
 ///
 /// devalue stores every value in a single flat array; container fields and
@@ -440,6 +487,45 @@ mod tests {
         assert!(article
             .content_html
             .contains("https://freedium-mirror.cfd/img/4000/pic.png 4000w"));
+    }
+
+    #[test]
+    fn test_parse_data_json_eager_nested_format() {
+        // Current Freedium shape: a single `{"type":"data","nodes":[…]}` object
+        // whose page payload (html/article) is nested under the `eager` key of
+        // the resolved devalue root, rather than being the root itself.
+        // data index: 0=root 1=slug 2=eager 3=html 4=article 5=title
+        //             6=author 7=name 8=avatar 9=postImage
+        let body = concat!(
+            "{\"type\":\"data\",\"nodes\":[null,{\"type\":\"data\",\"data\":[",
+            "{\"slug\":1,\"eager\":2,\"streamed\":-1},",
+            "\"https://medium.com/@x/y\",",
+            "{\"html\":3,\"article\":4},",
+            "\"<h3>Heading</h3><p>Hello world</p><img src=\\\"/img/4000/pic.png\\\"><script>bad()</script>\",",
+            "{\"title\":5,\"author\":6,\"postImage\":9},",
+            "\"New Title\",",
+            "{\"name\":7,\"avatar\":8},",
+            "\"John Smith\",",
+            "\"/img/avatar.png\",",
+            "\"/img/700/hero.jpg\"",
+            "]}]}"
+        );
+        let client = FreediumClient::new(vec!["https://freedium-mirror.cfd/".to_string()]);
+        let article = client
+            .parse_data_json(body, "https://medium.com/@x/y", "https://freedium-mirror.cfd/")
+            .expect("should parse the eager-nested format");
+
+        assert_eq!(article.title, "New Title");
+        assert_eq!(article.author, "John Smith");
+        assert!(article.content_html.contains("Hello world"));
+        assert!(!article.content_html.contains("bad()"));
+        assert_eq!(
+            article.header_image_url.as_deref(),
+            Some("https://freedium-mirror.cfd/img/700/hero.jpg")
+        );
+        assert!(article
+            .content_html
+            .contains("src=\"https://freedium-mirror.cfd/img/4000/pic.png\""));
     }
 
     #[test]

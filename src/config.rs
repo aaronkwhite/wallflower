@@ -28,10 +28,9 @@ pub enum Theme {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            endpoints: vec![
-                "https://freedium-mirror.cfd/".to_string(),
-                "https://freedium.cfd/".to_string(),
-            ],
+            // freedium.cfd no longer resolves (NXDOMAIN); the mirror is the
+            // only live host.
+            endpoints: vec!["https://freedium-mirror.cfd/".to_string()],
             theme: Theme::default(),
             font_size: 17,
             max_width: 680,
