@@ -1583,6 +1583,73 @@ kbd {
     line-height: 1.5;
 }
 
+/* Freedium code blocks ship a copy button as the first child of a ".relative"
+   wrapper, styled with Tailwind classes we don't load. Tag the wrapper in JS
+   (.code-block-wrapper), move the block's vertical margin onto the wrapper, and
+   pin the button to the top-right corner of the block. */
+#article-content .code-block-wrapper {
+    position: relative;
+    margin: 1.5em 0;
+}
+
+#article-content .code-block-wrapper pre {
+    margin: 0;
+}
+
+#article-content .code-copy-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 6px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+    z-index: 2;
+}
+
+#article-content .code-block-wrapper:hover .code-copy-btn {
+    opacity: 1;
+}
+
+#article-content .code-copy-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+#article-content .code-copy-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* Confirmation state: swap the clipboard glyph for a checkmark. */
+#article-content .code-copy-btn.copied {
+    color: var(--accent-color);
+    border-color: var(--accent-color);
+    opacity: 1;
+}
+
+#article-content .code-copy-btn.copied svg {
+    display: none;
+}
+
+#article-content .code-copy-btn.copied::after {
+    content: "";
+    width: 14px;
+    height: 8px;
+    border-left: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-2px) rotate(-45deg);
+}
+
 /* Blockquote */
 #article-content blockquote {
     margin: 1.5em 0;

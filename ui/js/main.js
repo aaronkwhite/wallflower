@@ -907,6 +907,7 @@ function renderArticle(article) {
 
     document.getElementById('article-content').innerHTML = article.content_html;
     replaceVideoEmbeds();
+    enhanceCodeBlocks();
     document.getElementById('original-link').href = article.url || article.original_url;
 
     try {
@@ -1010,6 +1011,34 @@ function replaceVideoEmbeds() {
         } else {
             iframe.replaceWith(card);
         }
+    });
+}
+
+// Wire up Freedium's per-code-block copy buttons. They ship with the article
+// HTML (class "code-copy-btn", code stored in data-code) but rely on Freedium's
+// own JavaScript, which we strip — so the click does nothing until we bind it.
+// We also tag the wrapper so CSS can position the button inside the block.
+function enhanceCodeBlocks() {
+    const content = document.getElementById('article-content');
+    content.querySelectorAll('.code-copy-btn').forEach(btn => {
+        // Mark the positioned wrapper (Freedium's Tailwind ".relative" has no
+        // effect without Tailwind loaded).
+        if (btn.parentElement) {
+            btn.parentElement.classList.add('code-block-wrapper');
+        }
+
+        btn.addEventListener('click', async () => {
+            // The browser already decodes HTML entities in attribute values.
+            const code = btn.getAttribute('data-code') || '';
+            try {
+                await writeText(code);
+                btn.classList.add('copied');
+                const toggleMs = parseInt(btn.getAttribute('data-toggle-ms'), 10) || 1200;
+                setTimeout(() => btn.classList.remove('copied'), toggleMs);
+            } catch (err) {
+                console.error('Failed to copy code block:', err);
+            }
+        });
     });
 }
 

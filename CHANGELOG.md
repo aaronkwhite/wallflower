@@ -2,6 +2,12 @@
 
 All notable changes to Wallflower will be documented in this file.
 
+## [0.3.7] - 2026-06-03
+
+### Fixed
+- Code-block copy buttons now work: they copy the snippet to the clipboard (previously they relied on Freedium's stripped JavaScript and did nothing)
+- Copy buttons are now positioned in the top-right corner of each code block instead of floating above it, and show a checkmark on success
+
 ## [0.3.6] - 2026-06-03
 
 ### Fixed
